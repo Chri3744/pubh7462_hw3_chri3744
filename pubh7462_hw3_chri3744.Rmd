@@ -1,0 +1,205 @@
+---
+title: "pubh7462_hw3_chri3744"
+author: "Taylor Christian"
+date: "2/15/2022"
+output: github_document
+---
+
+```{r setup, include = FALSE}
+#Load all the good stuff
+library(tidyverse)
+library(gt)
+library(purrr)
+library(paletteer)
+library(DataExplorer)
+
+#Working directory for .RMD
+knitr::opts_knit$set(echo = TRUE,
+                     root.dir = rprojroot::find_rstudio_root_file())
+
+#Controlling figure output in markdown
+knitr::opts_chunk$set(
+#  fig.height =   
+  fig.width = 6,
+#  fig.asp = .5,
+  out.width = "90%",
+#  out.height = 
+ fig.align  = "center",
+  cache = FALSE,
+  eval  = TRUE,
+  echo  = FALSE
+)
+
+#My Colours (from viridis)
+my_purple <- "#440154FF"
+my_yellow <- "#FDE725FF"
+
+#Set Theme for ggplot2
+theme_set(theme_bw() + theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom"))
+
+#Set Scientific notation output and decimal places for knitr
+options(scipen = 999)
+options(digits = 4)
+```
+
+
+``` {r}
+#Import data as tibble and clean names
+instacart.df <- 
+  as_tibble(read.csv("./data/instacart.csv")) %>%
+  janitor::clean_names()
+```
+
+
+# 3.1 Order Stats for Each Order and User
+``` {r error = FALSE, warning = FALSE, message = FALSE}
+order_stats.df <- instacart.df %>%
+  group_by(order_id, user_id) %>%
+  summarise(
+    "n_days" = mean(days_since_prior_order),
+    "n_items" = n_distinct(product_id),
+    "n_order" = mean(order_number),
+    "pct_reordered" = mean(reordered) * 100,
+    "n_aisles" = n_distinct(aisle_id),
+    "n_departments"  = n_distinct(department_id)
+  ) %>%
+  ungroup() %>%
+  summarise(across(contains(c("n_","pct_")),
+            .fns = list(Mean = mean, SD = sd, Median = median),
+            na.rm = TRUE,
+            .names = "{.col}-{.fn}"
+            )) %>%
+  pivot_longer(cols = everything(),
+               names_to = c("names", ".value"),
+               names_sep = "-") %>%
+  mutate(names = recode(names,
+                        n_days = "Number of Days",
+                        n_items = "Number of Items",
+                        n_order = "Number of Orders",
+                        n_aisles = "Number of Aisles",
+                        n_departments = "Number of Departments",
+                        pct_reordered = "Percent of Items Reordered")) %>%
+  rename("Names" = "names")
+
+order_stats.df %>%
+  gt() %>%
+  tab_header(title = "Order Stats for Each Order and User") %>%
+  as_raw_html()
+```
+
+
+# 3.2 Number of Orders per Aisle
+``` {r error = FALSE, warning = FALSE, message = FALSE, fig.height=20}
+aisle_stats.df <- instacart.df %>%
+  group_by(aisle) %>%
+  summarise(n_orders = n_distinct(order_id)) %>% ###
+  mutate(aisle = str_to_title(aisle),
+         aisle = as.factor(aisle),
+         aisle = fct_reorder(aisle, n_orders)) %>%
+    arrange(desc(n_orders))
+
+aisle_stats.df %>%
+  ggplot(aes(x = n_orders, y = aisle, fill = n_orders)) +
+  geom_col() +
+  scale_fill_viridis_c() +
+  labs(x = "Number of Orders, Descending", y = "Aisle",
+      title = "Orders per Aisle") +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    legend.title = element_text(face = "bold"),
+    legend.position = c(.8,.93),
+    legend.background = element_blank(),
+    panel.background = element_blank()
+    )
+```
+
+
+# 3.3 Top 6 Aisles in the Top 6 Departments
+``` {r error = FALSE, warning = FALSE, message = FALSE, fig.height = 30, fig.width = 30}
+top_department <- instacart.df %>%
+  group_by(department) %>%
+  summarise(n_department = n()) %>%
+  arrange(desc(n_department)) %>%
+  slice(1:6) %>%
+  ungroup()
+
+top_aisle <- instacart.df %>%
+  filter(department %in% top_department$department) %>%
+  group_by(department, aisle) %>%
+  summarise(n_aisle = n()) %>%
+  arrange(desc(n_aisle)) %>%
+  group_by(department) %>%
+  slice(1:6) %>%
+  ungroup() %>%
+  mutate(department = str_to_title(department) %>%
+           as.factor() %>%
+           fct_reorder(n_aisle, .desc = TRUE),
+         aisle = str_to_title(aisle) %>%
+           as.factor() %>%
+           fct_reorder2(department, n_aisle, .desc = TRUE)) %>%
+  arrange(desc(n_aisle))
+
+
+top_aisle %>%
+  ggplot(aes(x = n_aisle, y = aisle, fill = department)) +
+  geom_col() +
+  facet_wrap(vars(department), scales = "free_x") +
+  labs(x = "Count", y = "Aisle",
+       title = "Items Purchased in the Top 6 Aisles of the Top 6 Departments", fill = "Department") +
+  theme(
+    plot.title = element_text("bold", size = 40),
+    legend.position = c(.9,.9),
+    legend.title = element_text("bold", size = 30),
+    legend.text = element_text(size = 20),
+    axis.title = element_text(size = 30),
+    axis.text =  element_text(size = 20),
+    strip.text = element_text(size = 30)
+  )
+```  
+
+
+# 3.4 Top 5 Items in the Top 5 Aisles
+``` {r error = FALSE, warning = FALSE, message = FALSE}
+# Gather top 5 aisles by items purchased
+top_5_aisle <- instacart.df %>%
+  group_by(aisle) %>%
+  distinct(product_name, .keep_all = TRUE) %>%
+  summarise(n_aisle = n()) %>%
+  arrange(desc(n_aisle)) %>%
+  slice(1:6) %>%
+  ungroup()
+# Gather top 5 items for each aisle
+top_items <- instacart.df %>%
+  select(aisle, product_name) %>%
+  filter(aisle %in% top_5_aisle$aisle) %>%
+  group_by(aisle, product_name) %>%
+  mutate(aisle = str_to_title(aisle)) %>%
+  summarise(n_items = n()) %>%
+  arrange(aisle, desc(n_items)) %>%
+  slice(1:5) %>%
+  arrange(desc(n_items))
+
+# Generate gt table
+top_items %>%
+gt() %>%
+  tab_header(title = "Top 5 Items of the Top 5 Aisles") %>%
+  cols_align(
+    align = "right",
+    columns = n_items) %>%
+  cols_align(
+    align = "left",
+    columns = product_name) %>%
+  cols_label(
+    n_items = "Purchases",
+    product_name = "Product") %>%
+  data_color(
+    columns = c(n_items),
+    colors = scales::col_numeric(
+      palette = colorRamp(c("#FFFFFF", "#013220")),
+      domain = NULL)) %>%
+  as_raw_html()
+
+```
+
+
+
